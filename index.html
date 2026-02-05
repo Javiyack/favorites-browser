@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TV Favorites</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div class="hero__glow"></div>
+        <div class="hero__content">
+          <p class="eyebrow">Favoritos</p>
+          <h1>TV</h1>
+          <p class="subtitle">
+            Hey!! Selecciona o arrastra el archivo "Bookmarks" de Chrome y muestra
+            los botones de la carpeta TV.
+          </p>
+          <div class="controls">
+            <label class="file">
+              <input id="bookmarksInput" type="file" accept="application/json" />
+              <span>Seleccionar Bookmarks</span>
+            </label>
+            <button id="loadSample" class="ghost">Probar con ejemplo</button>
+          </div>
+          <div id="dropZone" class="drop-zone">
+            Arrastra aqui el archivo "Bookmarks" o un export JSON.
+          </div>
+          <div class="status" id="status">Esperando archivo...</div>
+        </div>
+      </header>
+
+      <main class="grid" id="linksGrid"></main>
+
+      <footer class="footer">
+        <span>
+          Consejo: el navegador no puede leer rutas locales sin que selecciones
+          el archivo manualmente.
+        </span>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
