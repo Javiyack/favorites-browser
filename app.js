@@ -5,6 +5,11 @@ const loadSample = document.getElementById("loadSample");
 const dropZone = document.getElementById("dropZone");
 const DEFAULT_BOOKMARKS_PATH =
   "C:\\Users\\javiyack\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Bookmarks";
+const POLL_INTERVAL_MS = 2000; // Comprobar cada 2 segundos
+
+let currentFileHandle = null;
+let lastBookmarksHash = null;
+let pollIntervalId = null;
 
 const sample = {
   roots: {
@@ -25,6 +30,34 @@ const sample = {
 };
 
 const DEFAULT_ICON = "youtube-play.png";
+const FAVICON_PROVIDERS = [
+  (host) => `https://www.google.com/s2/favicons?domain=${host}&sz=128`,
+  (host) => `https://icons.duckduckgo.com/ip3/${host}.ico`,
+  (host) => `https://www.google.com/s2/favicons?domain=${host}&sz=64`
+];
+
+// Proveedores de iconos por título (buscan logos relacionados con el nombre)
+const TITLE_ICON_PROVIDERS = [
+  (title) => `https://logo.clearbit.com/${encodeURIComponent(title.toLowerCase().replace(/\s+/g, ""))}.com`,
+  (title) => `https://logo.clearbit.com/${encodeURIComponent(title.toLowerCase().split(" ")[0])}.com`,
+  (title) => `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(title)}`
+];
+
+async function fetchLogoByTitle(title) {
+  try {
+    const response = await fetch(
+      `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(title)}`
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data && data.length > 0 && data[0].logo) {
+      return data[0].logo;
+    }
+  } catch (error) {
+    // Ignorar errores de red
+  }
+  return null;
+}
 
 function findFolderByName(node, folderName) {
   if (!node) {
@@ -75,6 +108,18 @@ function renderLinks(links) {
   status.textContent = `Mostrando ${links.length} links de TV.`;
 
   links.forEach((link, index) => {
+    let hostname = "";
+    if (link.url) {
+      try {
+        hostname = new URL(link.url).hostname;
+      } catch (error) {
+        hostname = "";
+      }
+    }
+
+    const faviconUrls = hostname && !hostname.includes("teleonline.org")
+      ? FAVICON_PROVIDERS.map((provider) => provider(hostname))
+      : [];
     const card = document.createElement("article");
     card.className = "card";
     card.style.animationDelay = `${index * 40}ms`;
@@ -94,7 +139,50 @@ function renderLinks(links) {
     icon.className = "card__icon";
     icon.alt = "";
     icon.loading = "lazy";
-    icon.src = DEFAULT_ICON;
+    
+    // Primero intentar buscar logo por título, luego favicon, luego default
+    let faviconIndex = 0;
+    let triedTitleLogo = false;
+    
+    const setNextFavicon = () => {
+      if (faviconIndex >= faviconUrls.length) {
+        icon.src = DEFAULT_ICON;
+        return;
+      }
+      icon.src = faviconUrls[faviconIndex];
+      faviconIndex += 1;
+    };
+
+    const tryTitleLogoThenFavicons = async () => {
+      if (!triedTitleLogo) {
+        triedTitleLogo = true;
+        const titleLogo = await fetchLogoByTitle(rawTitle);
+        if (titleLogo) {
+          icon.src = titleLogo;
+          icon.onerror = () => setNextFavicon();
+          return;
+        }
+      }
+      setNextFavicon();
+    };
+
+    icon.onerror = () => {
+      setNextFavicon();
+    };
+
+    icon.onload = () => {
+      // Si la imagen es muy pequeña (icono genérico de 16x16 o menos), usar fallback
+      if (icon.naturalWidth <= 16 || icon.naturalHeight <= 16) {
+        if (faviconIndex < faviconUrls.length) {
+          setNextFavicon();
+        } else if (icon.src !== DEFAULT_ICON) {
+          icon.src = DEFAULT_ICON;
+        }
+      }
+    };
+
+    // Intentar logo por título primero
+    tryTitleLogoThenFavicons();
 
     action.append(icon);
 
@@ -124,15 +212,67 @@ function handleBookmarksData(data) {
   renderLinks(links);
 }
 
-async function readBookmarksFile(file) {
+async function readBookmarksFile(file, isPolling = false) {
   try {
-    status.textContent = "Leyendo archivo...";
+    if (!isPolling) {
+      status.textContent = "Leyendo archivo...";
+    }
     const text = await file.text();
+    const newHash = simpleHash(text);
+    
+    // Si es polling y no hay cambios, no hacer nada
+    if (isPolling && newHash === lastBookmarksHash) {
+      return;
+    }
+    
+    lastBookmarksHash = newHash;
     const data = JSON.parse(text);
     handleBookmarksData(data);
+    
+    if (isPolling) {
+      status.textContent = `Actualizado automaticamente. ${new Date().toLocaleTimeString()}`;
+    }
   } catch (error) {
-    status.textContent = "No se pudo leer el archivo. Revisa que sea JSON.";
-    grid.innerHTML = "";
+    if (!isPolling) {
+      status.textContent = "No se pudo leer el archivo. Revisa que sea JSON.";
+      grid.innerHTML = "";
+    }
+  }
+}
+
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return hash.toString();
+}
+
+function startPolling(fileHandle) {
+  stopPolling();
+  currentFileHandle = fileHandle;
+  
+  pollIntervalId = setInterval(async () => {
+    if (currentFileHandle) {
+      try {
+        // Si es un FileSystemFileHandle (API moderna)
+        if (currentFileHandle.getFile) {
+          const file = await currentFileHandle.getFile();
+          await readBookmarksFile(file, true);
+        }
+      } catch (error) {
+        // Silenciar errores de polling
+      }
+    }
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
   }
 }
 
@@ -158,10 +298,22 @@ function setDefaultPathHint() {
     "Selecciona el archivo Bookmarks desde: " + DEFAULT_BOOKMARKS_PATH;
 }
 
-input.addEventListener("change", (event) => {
+input.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (file) {
-    readBookmarksFile(file);
+    await readBookmarksFile(file);
+    // Intentar usar File System Access API para polling
+    if (window.showOpenFilePicker && input.files[0]) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ accept: { "application/json": [".json", ""] } }],
+          startIn: input.files[0]
+        });
+        startPolling(handle);
+      } catch (err) {
+        // El usuario canceló o no hay soporte
+      }
+    }
   }
 });
 
@@ -185,7 +337,7 @@ if (dropZone) {
     });
   });
 
-  dropZone.addEventListener("drop", (event) => {
+  dropZone.addEventListener("drop", async (event) => {
     const file = extractFileFromDataTransfer(event.dataTransfer);
     if (!file) {
       status.textContent =
@@ -193,7 +345,20 @@ if (dropZone) {
       return;
     }
 
-    readBookmarksFile(file);
+    await readBookmarksFile(file);
+    
+    // Intentar obtener handle para polling (solo Chromium)
+    const items = event.dataTransfer?.items;
+    if (items && items[0]?.getAsFileSystemHandle) {
+      try {
+        const handle = await items[0].getAsFileSystemHandle();
+        if (handle.kind === "file") {
+          startPolling(handle);
+        }
+      } catch (err) {
+        // No hay soporte o falló
+      }
+    }
   });
 }
 
